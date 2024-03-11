@@ -8,6 +8,7 @@ from einops import rearrange
 from torch_ema import ExponentialMovingAverage
 
 from detcon.losses import DetConBLoss
+from dino.vision_transformer import vit_small
 
 
 class MLP(nn.Sequential):
@@ -22,8 +23,11 @@ class MLP(nn.Sequential):
 
 class Encoder(nn.Sequential):
     def __init__(self, backbone: str = "resnet50", pretrained: bool = False) -> None:
-        model = getattr(torchvision.models, backbone)(pretrained)
-        self.emb_dim = model.fc.in_features
+
+        model = vit_small(patch_size=16, num_classes=21, in_chans=13)
+        # model = getattr(torchvision.models, backbone)(pretrained)
+        # self.emb_dim = model.fc.in_features
+        self.emb_dim = model.embed_dim
         model.fc = nn.Identity()
         model.avgpool = nn.Identity()
         super().__init__(*list(model.children()))

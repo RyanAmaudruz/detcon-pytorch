@@ -177,3 +177,6 @@ class VOCSSLDataModule(VOCSegmentationBaseDataModule):
         mask2 = mask2.squeeze(dim=1).to(torch.long)
         batch = {"image": (image1, image2), "mask": (mask1, mask2)}
         return batch
+
+
+
