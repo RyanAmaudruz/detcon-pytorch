@@ -166,10 +166,7 @@ class PatchEmbed(nn.Module):
 
     def forward(self, x):
         B, C, H, W = x.shape
-        try:
-            x = self.proj(x).flatten(2).transpose(1, 2)
-        except:
-            print('t')
+        x = self.proj(x).flatten(2).transpose(1, 2)
         return x
 
 
@@ -230,6 +227,8 @@ class VisionTransformer(nn.Module):
             patch_pos_embed.reshape(1, int(math.sqrt(N)), int(math.sqrt(N)), dim).permute(0, 3, 1, 2),
             scale_factor=(w0 / math.sqrt(N), h0 / math.sqrt(N)),
             mode='bicubic',
+            recompute_scale_factor=False,
+            align_corners=False
         )
         assert int(w0) == patch_pos_embed.shape[-2] and int(h0) == patch_pos_embed.shape[-1]
         patch_pos_embed = patch_pos_embed.permute(0, 2, 3, 1).view(1, -1, dim)

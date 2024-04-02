@@ -27,7 +27,8 @@ class DetConBLoss(nn.Module):
         pind2: torch.Tensor,
         tind1: torch.Tensor,
         tind2: torch.Tensor,
-        local_negatives: bool = True,
+        step_count: int,
+        local_negatives: bool = False,
     ) -> torch.Tensor:
         """Compute the NCE scores from pairs of predictions and targets.
 
@@ -49,6 +50,7 @@ class DetConBLoss(nn.Module):
         Returns:
             A single scalar loss for the XT-NCE objective.
         """
+        # self.set_temperature(step_count)
         bs, num_samples, num_features = pred1.shape
         infinity_proxy = 1e9  # Used for masks to proxy a very large number.
         eps = 1e-11
@@ -134,3 +136,14 @@ class DetConBLoss(nn.Module):
         loss_b = manual_cross_entropy(logits_babb, labels_1, weight=weights_1)
         loss = loss_a + loss_b
         return loss
+
+    def set_temperature(self, step_count, warm_up_lag=1000,  t_max=3880, min_tau=0.075, max_tau=1):
+        if step_count < warm_up_lag:
+            # self.temperature = 0.1
+            self.temperature = 0.075
+        else:
+            step = step_count - warm_up_lag
+            self.temperature = (
+                min_tau +
+                0.5 * (max_tau - min_tau) * (1 - torch.cos(torch.tensor(torch.pi * step / t_max)))
+            )

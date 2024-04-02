@@ -24,11 +24,7 @@ S2C_MEAN_NEW = [x / 10000.0 * 255.0 for x in S2C_MEAN]
 
 S2C_STD_NEW = [x / 10000.0 * 255.0 for x in S2C_STD]
 
-S2C_MEAN_NEW_NP = np.array(S2C_MEAN_NEW).reshape(1, -1, 1, 1)
-
-S2C_STD_NEW_NP = np.array(S2C_STD_NEW).reshape(1, -1, 1, 1)
-
-class S2cDataModule(pl.LightningDataModule):
+class ImagenetteDataModule(pl.LightningDataModule):
 
     def __init__(self,
                  num_workers: int,
@@ -42,18 +38,27 @@ class S2cDataModule(pl.LightningDataModule):
         self.num_workers = num_workers
         self.batch_size = batch_size
         self.size_val_set = size_val_set
-        self.meta_df = meta_df
-        self.patch_id_list = self.meta_df['patch_id'].unique().tolist()
+
+        main_data_dir = '/gpfs/work5/0/prjs0790/data/imagenette/train/'
+        sub_dir_list = os.listdir(main_data_dir)
+        file_path_list = []
+        for d in sub_dir_list:
+            s_d = main_data_dir + d
+            for f in os.listdir(s_d):
+                file_path_list.append(s_d + '/' + f)
+        # self.meta_df = meta_df
+        # self.patch_id_list = self.meta_df['patch_id'].unique().tolist()
+        self.patch_id_list = file_path_list
         self.num_images = len(self.patch_id_list)
         # self.num_images = num_images
         self.train_transforms = train_transforms
         self.val_transforms = val_transforms
         self.im_train = None
         self.im_val = None
-        self.file_list = meta_df['file_name'].tolist()
-        random.shuffle(self.file_list)
-        # logger.info(f"Found {len(self.file_list)} many images")
-        print(f"Found {len(self.file_list)} many images")
+        # self.file_list = meta_df['file_name'].tolist()
+        # random.shuffle(self.file_list)
+        # # logger.info(f"Found {len(self.file_list)} many images")
+        # print(f"Found {len(self.file_list)} many images")
 
     def __len__(self):
         # return len(self.file_list)
@@ -81,19 +86,22 @@ class UnlabelledSc2(Dataset):
     def __init__(self, file_list, transforms):
         self.file_names = file_list
         self.transform = transforms
-        # global_crops_scale = (0.6, 1.0)
-        global_crops_scale = (0.2, 1.0)
+        global_crops_scale = (0.6, 1.0)
         # self.resize_trans = cvtransforms.RandomResizedCrop(224, scale=global_crops_scale, interpolation=InterpolationMode.BICUBIC)
-        self.resize_trans = cvtransforms.RandomResizedCrop(448, scale=global_crops_scale, interpolation='BICUBIC')
+        self.resize_trans = cvtransforms.RandomResizedCrop(224, scale=global_crops_scale, interpolation='BICUBIC')
         self.to_tensor = cvtransforms.ToTensor()
 
     def __len__(self):
         return len(self.file_names)
 
     def __getitem__(self, idx):
-        patch_id = self.file_names[idx]
-        with h5py.File('/gpfs/scratch1/shared/ramaudruz/s2c_un/s2c_264_light_new.h5', 'r') as f:
-            data = np.array(f.get(patch_id))
+        im = Image.open(self.file_names[idx])
+        # data = np.transpose(np.array(im), (2, 0, 1))
+
+
+        # patch_id = self.file_names[idx]
+        # with h5py.File('/gpfs/scratch1/shared/ramaudruz/s2c_un/s2c_264_light_new.h5', 'r') as f:
+        #     data = np.array(f.get(patch_id))
 
         # data = data.astype('float32')
 
@@ -103,20 +111,11 @@ class UnlabelledSc2(Dataset):
         # image = Image.open(img_path).convert('RGB')
         # if self.transform:
         #     image = self.transform(data)
-        return self.to_tensor(
-            self.resize_trans(np.transpose(data[np.random.choice([0,1,2,3]),:,:,:], (1, 2, 0)))
-        )
+        # return self.to_tensor(
+        #     self.resize_trans(np.transpose(data[np.random.choice([0,1,2,3]),:,:,:], (1, 2, 0)))
+        # )
+        return self.to_tensor(self.resize_trans(np.array(im)))
 
-
-
-
-    # def __getitem__(self, idx):
-    #     patch_id = self.file_names[idx]
-    #     with h5py.File('/gpfs/scratch1/shared/ramaudruz/s2c_un/s2c_264_light_new.h5', 'r') as f:
-    #         data = np.array(f.get(patch_id))
-    #     if self.normalize:
-    #         data = (data - S2C_MEAN_NEW_NP) / S2C_STD_NEW_NP
-    #     return self.resize_trans(torch.from_numpy(data[np.random.choice([0,1,2,3]),:,:,:])).float()
 
 
 
