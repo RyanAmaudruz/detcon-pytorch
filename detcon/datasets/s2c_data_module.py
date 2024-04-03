@@ -84,7 +84,9 @@ class UnlabelledSc2(Dataset):
         # global_crops_scale = (0.6, 1.0)
         global_crops_scale = (0.2, 1.0)
         # self.resize_trans = cvtransforms.RandomResizedCrop(224, scale=global_crops_scale, interpolation=InterpolationMode.BICUBIC)
-        self.resize_trans = cvtransforms.RandomResizedCrop(448, scale=global_crops_scale, interpolation='BICUBIC')
+        # self.resize_trans = cvtransforms.RandomResizedCrop(224, scale=global_crops_scale, interpolation='BICUBIC')
+        self.resize_trans = cvtransforms.RandomResizedCrop(256, scale=global_crops_scale, interpolation='BICUBIC')
+        # self.resize_trans = cvtransforms.RandomResizedCrop(448, scale=global_crops_scale, interpolation='BICUBIC')
         self.to_tensor = cvtransforms.ToTensor()
 
     def __len__(self):

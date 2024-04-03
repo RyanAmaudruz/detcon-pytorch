@@ -247,13 +247,14 @@ class Network(nn.Module):
         # self.encoder = Encoder(backbone, pretrained)
         # self.encoder = vit_small(patch_size=16, num_classes=21, in_chans=13)
         self.encoder = SwinTransformer(
-            img_size=224,
+            img_size=256,
             patch_size=16,
             in_chans=13,
-            embed_dim=384,
+            # embed_dim=384,
+            embed_dim=768,
             depths=[2, 2, 18, 2],
             num_heads=[3, 6, 12, 24],
-            window_size=7,
+            window_size=8,
             mlp_ratio=4.,
             qkv_bias=True,
             qk_scale=None,

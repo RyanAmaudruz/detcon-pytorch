@@ -546,7 +546,8 @@ class SwinTransformer(nn.Module):
 
         self.norm = norm_layer(self.num_features)
         self.avgpool = nn.AdaptiveAvgPool1d(1)
-        self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
+        # self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
+        self.head = FPN(in_channels_list=[768, 1536, 3072, 6144], out_channels=384)
 
         self.apply(self._init_weights)
 
@@ -577,15 +578,21 @@ class SwinTransformer(nn.Module):
         x = self.pos_drop(x)
         x4 = x.clone()
 
-        for layer in self.layers:
+        b, hw, e = x.shape
+        hw_root = int(hw**0.5)
+
+        outputs = [x.reshape(b, hw_root, hw_root, e).permute(0, 3, 1, 2)]
+        for i, layer in enumerate(self.layers):
             x = layer(x)
+            if not (len(self.layers) - 2) == i:
+                b, hw, e = x.shape
+                hw_root = int(hw**0.5)
+                outputs.append(x.reshape(b, hw_root, hw_root, e).permute(0, 3, 1, 2))
 
-        x5 = x.clone()
-
-        x = self.norm(x)  # B L C
-        x = self.avgpool(x.transpose(1, 2))  # B C 1
-        x = torch.flatten(x, 1)
-        return x
+        # x = self.norm(outputs[-1])  # B L C
+        # x = self.avgpool(x.transpose(1, 2))  # B C 1
+        # x = torch.flatten(x, 1)
+        return outputs
 
     def forward(self, x):
         x = self.forward_features(x)
@@ -600,3 +607,40 @@ class SwinTransformer(nn.Module):
         flops += self.num_features * self.patches_resolution[0] * self.patches_resolution[1] // (2 ** self.num_layers)
         flops += self.num_features * self.num_classes
         return flops
+
+
+class FPN(nn.Module):
+    def __init__(self, in_channels_list, out_channels):
+        super().__init__()
+        self.lateral_convs = nn.ModuleList()
+        self.smooth_convs = nn.ModuleList()
+        self.deconv_layers = nn.ModuleList()  # For deconvolution layers
+
+        for in_channels in in_channels_list:
+            if in_channels != out_channels:
+                lateral_conv = nn.Conv2d(in_channels, out_channels, kernel_size=1)
+                self.lateral_convs.append(lateral_conv)
+            else:
+                self.lateral_convs.append(nn.Identity())
+
+        for _ in in_channels_list:
+            smooth_conv = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
+            self.smooth_convs.append(smooth_conv)
+            deconv_layer = nn.ConvTranspose2d(out_channels, out_channels, kernel_size=2, stride=2)  # Deconvolution
+            self.deconv_layers.append(deconv_layer)
+
+    def forward(self, x):
+        last_out = None
+        outputs = []
+
+        for feature_map, lat_conv, smooth_conv, deconv in zip(reversed(x), reversed(self.lateral_convs), reversed(self.smooth_convs), reversed(self.deconv_layers)):
+            current_out = lat_conv(feature_map)
+
+            if last_out is not None:
+                upsampled_out = deconv(last_out)  # Perform upsampling with deconvolution
+                current_out = current_out + upsampled_out
+
+            last_out = smooth_conv(current_out)
+            outputs.insert(0, last_out)
+
+        return outputs[0]
