@@ -15,7 +15,7 @@ import pickle
 
 from detcon.swin.swin_transformer import SwinTransformer
 
-os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+# os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
 from torchvision.transforms import InterpolationMode
 

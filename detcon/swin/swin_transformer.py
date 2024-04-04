@@ -796,6 +796,14 @@ class FPN(nn.Module):
                 padding=1
             )
 
+            # Batch norm
+            l_conv = nn.Sequential(l_conv, nn.BatchNorm2d(out_channels))
+            fpn_conv = nn.Sequential(fpn_conv, nn.BatchNorm2d(out_channels))
+
+            # Activation
+            l_conv = nn.Sequential(l_conv, nn.ReLU(inplace=True))
+            fpn_conv = nn.Sequential(fpn_conv, nn.ReLU(inplace=True))
+
             self.lateral_convs.append(l_conv)
             self.fpn_convs.append(fpn_conv)
 
@@ -837,12 +845,10 @@ class FPN(nn.Module):
             # In some cases, fixing `scale factor` (e.g. 2) is preferred, but
             #  it cannot co-exist with `size` in `F.interpolate`.
             if 'scale_factor' in self.upsample_cfg:
-                laterals[i - 1] += F.interpolate(laterals[i],
-                                                 **self.upsample_cfg)
+                laterals[i - 1] = laterals[i - 1] + F.interpolate(laterals[i], **self.upsample_cfg)
             else:
                 prev_shape = laterals[i - 1].shape[2:]
-                laterals[i - 1] += F.interpolate(
-                    laterals[i], size=prev_shape, **self.upsample_cfg)
+                laterals[i - 1] = laterals[i - 1] + F.interpolate(laterals[i], size=prev_shape, **self.upsample_cfg)
 
             # build outputs
         # part 1: from original levels
