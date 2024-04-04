@@ -8,7 +8,9 @@
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
+from mmcv.cnn import xavier_init
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 
 
@@ -394,13 +396,11 @@ class BasicLayer(nn.Module):
             self.downsample = None
 
     def forward(self, x):
-        x1 = x.clone()
         for blk in self.blocks:
             if self.use_checkpoint:
                 x = checkpoint.checkpoint(blk, x)
             else:
                 x = blk(x)
-        x2 = x.clone()
         if self.downsample is not None:
             x = self.downsample(x)
         return x
@@ -528,27 +528,33 @@ class SwinTransformer(nn.Module):
         # build layers
         self.layers = nn.ModuleList()
         for i_layer in range(self.num_layers):
-            layer = BasicLayer(dim=int(embed_dim * 2 ** i_layer),
-                               input_resolution=(patches_resolution[0] // (2 ** i_layer),
-                                                 patches_resolution[1] // (2 ** i_layer)),
-                               depth=depths[i_layer],
-                               num_heads=num_heads[i_layer],
-                               window_size=window_size,
-                               mlp_ratio=self.mlp_ratio,
-                               qkv_bias=qkv_bias, qk_scale=qk_scale,
-                               drop=drop_rate, attn_drop=attn_drop_rate,
-                               drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
-                               norm_layer=norm_layer,
-                               downsample=PatchMerging if (i_layer < self.num_layers - 1) else None,
-                               use_checkpoint=use_checkpoint,
-                               norm_before_mlp=norm_before_mlp)
+            layer = BasicLayer(
+                dim=int(embed_dim * 2 ** i_layer),
+                input_resolution=(patches_resolution[0] // (2 ** i_layer), patches_resolution[1] // (2 ** i_layer)),
+                depth=depths[i_layer],
+                num_heads=num_heads[i_layer],
+                window_size=window_size,
+                mlp_ratio=self.mlp_ratio,
+                qkv_bias=qkv_bias, qk_scale=qk_scale,
+                drop=drop_rate, attn_drop=attn_drop_rate,
+                drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
+                norm_layer=norm_layer,
+                downsample=PatchMerging if (i_layer < self.num_layers - 1) else None,
+                use_checkpoint=use_checkpoint,
+                norm_before_mlp=norm_before_mlp
+            )
             self.layers.append(layer)
 
         self.norm = norm_layer(self.num_features)
         self.avgpool = nn.AdaptiveAvgPool1d(1)
         # self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
-        self.head = FPN(in_channels_list=[768, 1536, 3072, 6144], out_channels=384)
-
+        self.head = FPN(
+            # in_channels=[768, 1536, 3072, 6144],
+            in_channels=[384, 768, 1536, 3072],
+            out_channels=384,
+            num_outs=5,
+            add_extra_convs=True
+        )
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
@@ -569,14 +575,10 @@ class SwinTransformer(nn.Module):
         return {'relative_position_bias_table'}
 
     def forward_features(self, x):
-        x1 = x.clone()
         x = self.patch_embed(x)
-        x2 = x.clone()
         if self.ape:
             x = x + self.absolute_pos_embed
-        x3 = x.clone()
         x = self.pos_drop(x)
-        x4 = x.clone()
 
         b, hw, e = x.shape
         hw_root = int(hw**0.5)
@@ -609,38 +611,243 @@ class SwinTransformer(nn.Module):
         return flops
 
 
+# class FPN(nn.Module):
+#     def __init__(self, in_channels_list, out_channels):
+#         super().__init__()
+#         self.lateral_convs = nn.ModuleList()
+#         self.smooth_convs = nn.ModuleList()
+#         self.deconv_layers = nn.ModuleList()  # For deconvolution layers
+#
+#         for in_channels in in_channels_list:
+#             if in_channels != out_channels:
+#                 lateral_conv = nn.Conv2d(in_channels, out_channels, kernel_size=1)
+#                 self.lateral_convs.append(lateral_conv)
+#             else:
+#                 self.lateral_convs.append(nn.Identity())
+#
+#         for _ in in_channels_list:
+#             smooth_conv = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
+#             self.smooth_convs.append(smooth_conv)
+#             deconv_layer = nn.ConvTranspose2d(out_channels, out_channels, kernel_size=2, stride=2)  # Deconvolution
+#             self.deconv_layers.append(deconv_layer)
+#
+#     def forward(self, x):
+#         last_out = None
+#         outputs = []
+#
+#         for feature_map, lat_conv, smooth_conv, deconv in zip(reversed(x), reversed(self.lateral_convs), reversed(self.smooth_convs), reversed(self.deconv_layers)):
+#             current_out = lat_conv(feature_map)
+#
+#             if last_out is not None:
+#                 upsampled_out = deconv(last_out)  # Perform upsampling with deconvolution
+#                 current_out = current_out + upsampled_out
+#
+#             last_out = smooth_conv(current_out)
+#             outputs.insert(0, last_out)
+#
+#         return outputs[0]
+
+# import torch
+# import torch.nn as nn
+# import torch.nn.functional as F
+
+# class FPN3(nn.Module):
+#     def __init__(self, in_channels_list, out_channels):
+#         super().__init__()
+#         self.lateral_convs = nn.ModuleList()
+#         self.smooth_convs = nn.ModuleList()
+#         self.deconv_layers = nn.ModuleList()  # For deconvolution layers
+#
+#         for in_channels in in_channels_list:
+#             if in_channels != out_channels:
+#                 lateral_conv = nn.Conv2d(in_channels, out_channels, kernel_size=1)
+#                 self.lateral_convs.append(lateral_conv)
+#             else:
+#                 self.lateral_convs.append(nn.Identity())
+#
+#         for _ in in_channels_list:
+#             smooth_conv = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
+#             self.smooth_convs.append(smooth_conv)
+#             deconv_layer = nn.ConvTranspose2d(out_channels, out_channels, kernel_size=2, stride=2)  # Deconvolution
+#             self.deconv_layers.append(deconv_layer)
+#
+#     def forward(self, x):
+#         last_out = None
+#         outputs = []
+#
+#         for feature_map, lat_conv, smooth_conv, deconv in zip(reversed(x), reversed(self.lateral_convs), reversed(self.smooth_convs), reversed(self.deconv_layers)):
+#             current_out = lat_conv(feature_map)
+#
+#             if last_out is not None:
+#                 upsampled_out = deconv(last_out)  # Perform upsampling with deconvolution
+#                 current_out = current_out + upsampled_out
+#
+#             last_out = smooth_conv(current_out)
+#             outputs.insert(0, last_out)
+#
+#         return outputs[0]
+
+# import torch
+# import torch.nn as nn
+#
+# class FPN4(nn.Module):
+#     def __init__(self, in_channels_list, out_channels):
+#         super().__init__()
+#         self.lateral_convs = nn.ModuleList()
+#         self.smooth_convs = nn.ModuleList()
+#         self.deconv_layers = nn.ModuleList()
+#
+#         for in_channels in in_channels_list:
+#             if in_channels != out_channels:
+#                 lateral_conv = nn.Conv2d(in_channels, out_channels, kernel_size=1)
+#                 self.lateral_convs.append(lateral_conv)
+#             else:
+#                 self.lateral_convs.append(nn.Identity())
+#
+#         for _ in in_channels_list:
+#             smooth_conv = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
+#             self.smooth_convs.append(smooth_conv)
+#
+#         # Deconvolution layers with appropriate strides for upsampling
+#         self.deconv_layers.append(nn.ConvTranspose2d(out_channels, out_channels, kernel_size=2, stride=2))  # 16x16 -> 32x32
+#         self.deconv_layers.append(nn.ConvTranspose2d(out_channels, out_channels, kernel_size=2, stride=2))  # 32x32 -> 64x64
+#
+#     def forward(self, x):
+#         last_out = None
+#         outputs = []
+#
+#         for feature_map, lat_conv, smooth_conv, deconv in zip(reversed(x), reversed(self.lateral_convs), reversed(self.smooth_convs), reversed(self.deconv_layers)):
+#             current_out = lat_conv(feature_map)
+#
+#             if last_out is not None:
+#                 upsampled_out = deconv(last_out)
+#                 current_out = current_out + upsampled_out
+#
+#             last_out = smooth_conv(current_out)
+#             outputs.insert(0, last_out)
+#
+#         return outputs[0]
+
+
+# import torch.nn as nn
+
+
+
 class FPN(nn.Module):
-    def __init__(self, in_channels_list, out_channels):
-        super().__init__()
-        self.lateral_convs = nn.ModuleList()
-        self.smooth_convs = nn.ModuleList()
-        self.deconv_layers = nn.ModuleList()  # For deconvolution layers
 
-        for in_channels in in_channels_list:
-            if in_channels != out_channels:
-                lateral_conv = nn.Conv2d(in_channels, out_channels, kernel_size=1)
-                self.lateral_convs.append(lateral_conv)
+    def __init__(self,
+                 in_channels,
+                 out_channels,
+                 num_outs,
+                 start_level=0,
+                 end_level=-1,
+                 add_extra_convs=False,
+                 extra_convs_on_inputs=False,
+                 relu_before_extra_convs=False,
+                 no_norm_on_lateral=False,
+                 upsample_cfg=dict(mode='nearest')):
+        super(FPN, self).__init__()
+        assert isinstance(in_channels, list)
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.num_ins = len(in_channels)
+        self.num_outs = num_outs
+        self.relu_before_extra_convs = relu_before_extra_convs
+        self.no_norm_on_lateral = no_norm_on_lateral
+        self.fp16_enabled = False
+        self.upsample_cfg = upsample_cfg.copy()
+
+        if end_level == -1:
+            self.backbone_end_level = self.num_ins
+            assert num_outs >= self.num_ins - start_level
+        else:
+            # if end_level < inputs, no extra level is allowed
+            self.backbone_end_level = end_level
+            assert end_level <= len(in_channels)
+            assert num_outs == end_level - start_level
+        self.start_level = start_level
+        self.end_level = end_level
+        self.add_extra_convs = add_extra_convs
+        assert isinstance(add_extra_convs, (str, bool))
+        if isinstance(add_extra_convs, str):
+            # Extra_convs_source choices: 'on_input', 'on_lateral', 'on_output'
+            assert add_extra_convs in ('on_input', 'on_lateral', 'on_output')
+        elif add_extra_convs:  # True
+            if extra_convs_on_inputs:
+                # For compatibility with previous release
+                # TODO: deprecate `extra_convs_on_inputs`
+                self.add_extra_convs = 'on_input'
             else:
-                self.lateral_convs.append(nn.Identity())
+                self.add_extra_convs = 'on_output'
 
-        for _ in in_channels_list:
-            smooth_conv = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
-            self.smooth_convs.append(smooth_conv)
-            deconv_layer = nn.ConvTranspose2d(out_channels, out_channels, kernel_size=2, stride=2)  # Deconvolution
-            self.deconv_layers.append(deconv_layer)
+        self.lateral_convs = nn.ModuleList()
+        self.fpn_convs = nn.ModuleList()
 
-    def forward(self, x):
-        last_out = None
-        outputs = []
+        for i in range(self.start_level, self.backbone_end_level):
+            l_conv = nn.Conv2d(
+                in_channels[i],
+                out_channels,
+                1
+            )
+            fpn_conv = nn.Conv2d(
+                out_channels,
+                out_channels,
+                3,
+                padding=1
+            )
 
-        for feature_map, lat_conv, smooth_conv, deconv in zip(reversed(x), reversed(self.lateral_convs), reversed(self.smooth_convs), reversed(self.deconv_layers)):
-            current_out = lat_conv(feature_map)
+            self.lateral_convs.append(l_conv)
+            self.fpn_convs.append(fpn_conv)
 
-            if last_out is not None:
-                upsampled_out = deconv(last_out)  # Perform upsampling with deconvolution
-                current_out = current_out + upsampled_out
+        # Add extra levels for upsampling
+        extra_levels = num_outs - self.backbone_end_level + self.start_level
+        if self.add_extra_convs and extra_levels >= 1:
+            for i in range(extra_levels):
+                if i == 0 and self.add_extra_convs == 'on_input':
+                    in_channels = self.in_channels[self.backbone_end_level - 1]
+                else:
+                    in_channels = out_channels
+                extra_fpn_conv = nn.Conv2d(
+                    in_channels,
+                    out_channels,
+                    3,
+                    stride=2,  # Stride 2 for upsampling
+                    padding=1
+                )
+                self.fpn_convs.append(extra_fpn_conv)
 
-            last_out = smooth_conv(current_out)
-            outputs.insert(0, last_out)
+    # default init_weights for conv(msra) and norm in ConvModule
+    def init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                xavier_init(m, distribution='uniform')
 
-        return outputs[0]
+    def forward(self, inputs):
+        assert len(inputs) == len(self.in_channels)
+
+        # build laterals
+        laterals = [
+            lateral_conv(inputs[i + self.start_level])
+            for i, lateral_conv in enumerate(self.lateral_convs)
+        ]
+
+        # build top-down path
+        used_backbone_levels = len(laterals)
+        for i in range(used_backbone_levels - 1, 0, -1):
+            # In some cases, fixing `scale factor` (e.g. 2) is preferred, but
+            #  it cannot co-exist with `size` in `F.interpolate`.
+            if 'scale_factor' in self.upsample_cfg:
+                laterals[i - 1] += F.interpolate(laterals[i],
+                                                 **self.upsample_cfg)
+            else:
+                prev_shape = laterals[i - 1].shape[2:]
+                laterals[i - 1] += F.interpolate(
+                    laterals[i], size=prev_shape, **self.upsample_cfg)
+
+            # build outputs
+        # part 1: from original levels
+        outs = [
+            self.fpn_convs[i](laterals[i]) for i in range(used_backbone_levels)
+        ]
+        return outs[0]
+

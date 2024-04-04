@@ -250,8 +250,8 @@ class Network(nn.Module):
             img_size=256,
             patch_size=16,
             in_chans=13,
-            # embed_dim=384,
-            embed_dim=768,
+            embed_dim=384,
+            # embed_dim=768,
             depths=[2, 2, 18, 2],
             num_heads=[3, 6, 12, 24],
             window_size=8,
@@ -265,16 +265,27 @@ class Network(nn.Module):
             norm_befor_mlp='ln',
         )
 
+        state_dict = torch.load('/gpfs/work5/0/prjs0790/data/run_outputs/checkpoints/ssl4eo_ssl/ssl_s2c_new_transforms/checkpoint0095.pth', map_location="cpu")
+        new_state_dict = {
+            k.replace("backbone.blocks.", "layers.0.blocks.").replace('backbone.', ''): v
+            for k, v in state_dict['teacher'].items()
+            if 'backbone.patch_embed.' in k or 'backbone.blocks.0.' in k or 'backbone.blocks.1.' in k
+        }
 
+        for n, p in self.encoder.named_parameters():
+            if n in new_state_dict:
+                p = new_state_dict[n]
+                p.requires_grad = False
 
-# self.encoder = vit_small(patch_size=16, num_classes=21, in_chans=3)
-#         if pretrained:
-#             load_pretrained_weights(
-#                 self.encoder,
-#                 '/gpfs/work5/0/prjs0790/data/run_outputs/checkpoints/ssl4eo_ssl/ssl_s2c_new_transforms/checkpoint0095.pth',
-#                 'teacher'
-#             )
-        self.projector = MLP(self.encoder.embed_dim, 300, output_dim)
+        #
+        # self.encoder = vit_small(patch_size=16, num_classes=21, in_chans=3)
+        #         if pretrained:
+        #             load_pretrained_weights(
+        #                 self.encoder,
+        #                 '/gpfs/work5/0/prjs0790/data/run_outputs/checkpoints/ssl4eo_ssl/ssl_s2c_new_transforms/checkpoint0095.pth',
+        #                 'teacher'
+        #             )
+        self.projector = MLP(384, 300, output_dim)
         self.mask_pool = MaskPooling(num_classes, num_samples, downsample)
 
     # def forward(self, x: torch.Tensor, masks: torch.Tensor) -> Sequence[torch.Tensor]:
@@ -291,7 +302,10 @@ class Network(nn.Module):
         m, mids = self.mask_pool(masks)
         nb, ns = m.shape[:2]
         e = self.encoder(x)
-        e = e[:, 1:, :]
+        bs, es = e.shape[:2]
+        e = e.permute(0, 2, 3, 1).reshape(bs, -1, es)
+
+        # e = e[:, 1:, :]
         # e = rearrange(e, "b c h w -> b (h w) c")
         e = m.reshape(nb, ns, -1) @ e
         p = self.projector(e)
@@ -473,7 +487,7 @@ class DetConB(pl.LightningModule):
         self.augment2 = DEFAULT_AUG
         self.crop_flip = transforms.Compose([
             # transforms.RandomResizedCrop(size=(224, 224), scale=(0.08, 1)),
-            Custom_Transform(224),
+            Custom_Transform(256),
             transforms.RandomVerticalFlip(),
             transforms.RandomHorizontalFlip()
         ])
@@ -481,7 +495,7 @@ class DetConB(pl.LightningModule):
     def configure_optimizers(self) -> torch.optim.Optimizer:
         proj_params = {'params': [p for n, p in self.named_parameters() if 'projector' in n], 'lr': 1e-3}
         pred_params = {'params': [p for n, p in self.named_parameters() if 'predictor' in n], 'lr': 1e-3}
-        encoder_params = {'params': [p for n, p in self.named_parameters() if 'encoder' in n], 'lr': 1e-4}
+        encoder_params = {'params': [p for n, p in self.named_parameters() if 'encoder' in n], 'lr': 5e-4}
         # enc_mlp_params = {'params': [p for n, p in self.named_parameters() if 'enc_mlp' in n], 'lr': 1e-3}
 
         return torch.optim.Adam(
@@ -511,13 +525,13 @@ class DetConB(pl.LightningModule):
         return F.one_hot(mask.argmax(1), num_classes=self.num_classes).permute(0, 3, 1, 2).float()
 
     def training_step(self, batch: Dict, batch_idx: int) -> torch.Tensor:
-        if self.step_count == 0:
-            for n, p in self.online_network.encoder.named_parameters():
-                if n not in ['head.weight', 'head.bias']:
-                    p.requires_grad = False
-        elif self.step_count == 100:
-            for n, p in self.online_network.encoder.named_parameters():
-                p.requires_grad = True
+        # if self.step_count == 0:
+        #     for n, p in self.online_network.encoder.named_parameters():
+        #         if n not in ['head.weight', 'head.bias']:
+        #             p.requires_grad = False
+        # elif self.step_count == 100:
+        #     for n, p in self.online_network.encoder.named_parameters():
+        #         p.requires_grad = True
 
         self.step_count += 1
 
@@ -525,7 +539,12 @@ class DetConB(pl.LightningModule):
 
         # features = self.enc_mlp(features)
 
-        fea_wo_cls = features[:, 1:, :]
+        # fea_wo_cls = features[:, 1:, :]
+
+        bs, es = features.shape[:2]
+
+        fea_wo_cls = features.permute(0, 2, 3, 1).reshape(bs, -1, es)
+
         masks = self.get_masks_from_features(fea_wo_cls)
 
         _, n_masks, img_size1, img_size2 = masks.shape
@@ -584,7 +603,8 @@ class DetConB(pl.LightningModule):
         return loss
 
     def get_masks_from_features(self, fea_wo_cls):
-        image_size = 448
+        # image_size = 448
+        image_size = 256
         device = 'cuda'
         cluster_pred_list = []
         for i in range(fea_wo_cls.shape[0]):
